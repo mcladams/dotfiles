@@ -251,3 +251,4 @@ unlock-keyring() {
 
     unset KEYRING_PASSWORD
 }
+gemini() { if [ "$1" = "extensions" ]; then shift 1; agy plugin "$@";  return; else gemini "$@"; fi; }
