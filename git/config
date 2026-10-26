@@ -7,7 +7,7 @@
 	name = Michael C. Adams
 	email = 10792116+mcladams@users.noreply.github.com
 [pull]
-	rebase = false
+	rebase = true
 [push]
 	autoSetupRemote = true
 [fetch]
@@ -17,9 +17,12 @@
 [rebase]
 	autoSquash = true
 [init]
-	defaultbranch = master
+	defaultbranch = main
 [color]
 	ui = auto
-[credential]
-	helper = cache --timeout 21600
-	helper = oauth
+[credential "https://github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential

@@ -24,7 +24,7 @@
 # you can launch broot with `br -H`).
 # A popular flag is the `g` one which displays git related info.
 #
-# default_flags:
+default_flags:"-gh"
 
 ###############################################################
 # Terminal's title
@@ -282,19 +282,19 @@ imports: [
             unknown
         ]
         # (un)comment to choose your preferred skin
-        file: skins/dark-blue.hjson
+        //file: skins/dark-blue.hjson
         //file: skins/catppuccin-macchiato.hjson
         //file: skins/catppuccin-mocha.hjson
         //file: skins/dark-gruvbox.hjson
         //file: skins/dark-orange.hjson
-        //file: skins/solarized-dark.hjson
+        file: skins/solarized-dark.hjson
     }
 
     # This skin is imported when your terminal is light
     {
         luma: light
         # (un)comment to choose your preferred skin
-        //file: skins/solarized-light.hjson
-        file: skins/white.hjson
+        file: skins/solarized-light.hjson
+        //file: skins/white.hjson
     }
 ]

@@ -1,0 +1,23 @@
+#!/bin/bash
+#### install script for dotfiles symlinks to appropriate config directory
+
+set -eu -o pipefail
+
+# evaluates the directory this script is placed in, even if the script is sourced from another script
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+# Defaults are configdir is the last part of script dir
+# CONFIG_DIR=$HOME/.config/${SCRIPT_DIR##*/}
+echo SCRIPT_DIR $SCRIPT_DIR
+CONFIG_DIR=$HOME
+
+# create config subdirectories in case not exist
+mapfile dirs < <(find $SCRIPT_DIR -type d -printf 'mkdir -p '"${CONFIG_DIR}"'/%P \n')
+#for foo in "${dirs[@]}"; do eval "$foo"; done
+for foo in "${dirs[@]}"; do echo "$foo"; done
+
+# create links in config dir to dofiles
+mapfile commands < <(find $SCRIPT_DIR -type f ! -name install -printf 'ln -sf %p '"${CONFIG_DIR}"'/.%P \n')
+#for bar in "${commands[@]}"; do eval "$bar"; done
+for bar in "${commands[@]}"; do echo "$bar"; done
+
+unset foo bar

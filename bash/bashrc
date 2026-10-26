@@ -103,6 +103,17 @@ if [ -f ~/.bash_aliases ]; then
     . ~/.bash_aliases
 fi
 
+if [ -d "~/.bashrc.d" ]; then
+    # Enable nullglob so the loop does not run if no .bash files exist
+    shopt -s nullglob
+    for f in "~/.bashrc.d"/*.bash; do
+        # Test if it is a regular readable file (skips broken links, dirs)
+        [ -f "$f" ] && [ -r "$f" ] && . "$f"
+    done
+    shopt -u nullglob
+    unset f
+fi
+
 # enable programmable completion features (you don't need to enable
 # this, if it's already enabled in /etc/bash.bashrc and /etc/profile
 # sources /etc/bash.bashrc).
@@ -116,6 +127,7 @@ if [ ! -f /etc/profile.d/bash_completion.sh ]; then
   fi
 fi
 
+# use starship prompt if installed
     __main() {
         local major="${BASH_VERSINFO[0]}"
         local minor="${BASH_VERSINFO[1]}"
@@ -126,12 +138,12 @@ fi
         fi
     }
 
-    __main
-    unset -f __main
+[ -x /usr/bin/starship ] && __main && unset -f __main
 
+[ -f ~/.atuin/bin/env ] && source "$HOME/.atuin/bin/env"
+eval "$(atuin init bash)"
 #eval "$(atuin init bash --disable-up-arrow)"
 
-source /home/mike/.config/broot/launcher/bash/br
+[ -x /usr/bin/broot ] && source /home/mike/.config/broot/launcher/bash/br
 
 [[ ! ${BLE_VERSION-} ]] || ble-attach
-
