@@ -127,7 +127,7 @@ if [ ! -f /etc/profile.d/bash_completion.sh ]; then
   fi
 fi
 
-# use starship prompt if installed
+#### use starship prompt if installed
     __main() {
         local major="${BASH_VERSINFO[0]}"
         local minor="${BASH_VERSINFO[1]}"
@@ -137,13 +137,27 @@ fi
             source /dev/stdin <<<"$(/usr/bin/starship init bash --print-full-init)"
         fi
     }
-
+#
 [ -x /usr/bin/starship ] && __main && unset -f __main
 
+
+#### atuin
 [ -f ~/.atuin/bin/env ] && source "$HOME/.atuin/bin/env"
+# 1. Initialize Atuin (owns standard Up Arrow and filter_mode_shell_up_key_binding)
 eval "$(atuin init bash)"
-#eval "$(atuin init bash --disable-up-arrow)"
+#
+# 2. Shift+Up: Move backward into older Bash history
+bind '"\e[1;2A": previous-history'
+bind '"\e[a": previous-history'
+#
+# 3. Shift+Down: Move forward into newer Bash history (handles overshoots)
+bind '"\e[1;2B": next-history'
+bind '"\e[b": next-history'
+
 
 [ -x /usr/bin/broot ] && source /home/mike/.config/broot/launcher/bash/br
 
 [[ ! ${BLE_VERSION-} ]] || ble-attach
+
+# -X or --no-init leaves text on screen after exit -R colourizes
+export LESS="-XR"

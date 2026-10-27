@@ -4,10 +4,13 @@
 # Environmental variables default values                                       #
 ################################################################################
 
+# Remember "0" = true
 REMOVE_EMPTY_DIRS="0" #true: check mountpoint for empty directories & remove
 FORCE_CANMOUNT="1" #false
 FORCE_OVERLAY="0" #true
-CHECK_MOUNT_USED="1" #false
+
+# Not implemented yet
+#CHECK_MOUNT_USED="1" #false
 
 
 
@@ -27,13 +30,48 @@ get_second_children ()
 {
     for first_child in $(get_first_children $1)
     do
-        get_first_children $fiirst_child
+        get_first_children $first_child
     done
 }
 
-get_boot_datasets ()
+get_bootsets ()
 # these have mountpoint / and canmount=noauto
+{
+    zfs list -Ho name,canmount,mountpoint "$@" | awk '$2=="noauto" && $3=="/" { print $1 }'
+}
 
+_bootsets ()
+{
+    mapfile -t bootsets < <(zfs list -Ho name,canmount,mountpoint "$@" | awk '$2=="noauto" && $3=="/" { print $1 }')
+}
+
+_uniq_zfsuserprops () 
+{
+    if [ "$1" = "-t" ]; then
+        local ztype="$1 $2"
+        shift 2
+    else
+        ztype="-t filesystem"
+    fi
+    zfs get -H "$ztype" all "$@" | grep --color=auto -Po '^\S+\t\K[\w.-]+:[\w.-]+' | sort | uniq
+}
+
+zls_userprops ()
+{
+    zfs list -o name,used,referenced,usedsnap,overlay,canmount,mounted,mountpoint,$(paste -sd, _uniq_zfsuserprops) "$@"
+}
+
+_clean_mps ()
+{
+    local mp
+    for mp in "$@"; do
+        if [ -d "$mp" ]; then
+            if ! find "$mp" -mindepth 1 ! -type d -print -quit | grep -q .; then
+                sudo rm -r "$mp"
+            fi
+        fi
+    done
+}
 
 ################################################################################
 # Boolean test functiions                                                      #
@@ -77,10 +115,13 @@ _overlay_ff ()
 # Mount zfs datasets for offline access                                        #
 ################################################################################
 
-_zut_simple_mount()
+zm ()
 {
-
-
+    local ds="$1" mp="$2"
+    [ $REMOVE_EMPTY_DIRS ] && _clean_mps "$mp"
+    sudo mkdir -p "$mp"
+    sudo mount -t zfs -o zfsutil "$ds" "$mp"
+}
 
 _zmount ()
 # Atomic mount function: mounts one dataset to one mountpoint with zfsutil

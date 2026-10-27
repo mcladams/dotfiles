@@ -252,3 +252,12 @@ unlock-keyring() {
     unset KEYRING_PASSWORD
 }
 gemini() { if [ "$1" = "extensions" ]; then shift 1; agy plugin "$@";  return; else gemini "$@"; fi; }
+read_hostid () 
+{ 
+    local arg;
+    [ -z "$1" ] && set /etc/hostid;
+    for arg in "$@";
+    do
+        od -tx4 -N4 -An "$arg";
+    done
+}
