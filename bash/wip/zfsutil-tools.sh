@@ -15,6 +15,56 @@ FORCE_OVERLAY="0" #true
 
 
 ################################################################################
+# Predicate functions (0 = true, 1 = false)                                    #
+################################################################################
+
+_empty_dir ()
+{
+    local target="${1:?Error: missing directory path}"
+    [[ -d "$target" && -r "$target" ]] || return 1
+    # Returns 0 if empty, 1 if populated (no command substitution subshell needed)
+    find "$target" -mindepth 1 -maxdepth 1 -exec false {} + -quit 2>/dev/null
+}
+
+_empty_dirtree ()
+{
+    local target="${1:?Error: missing directory path}"
+    [[ -d "$target" && -r "$target" ]] || return 1
+    # Returns 0 if tree contains only directories, 1 if any non-directory exists
+    find "$target" -mindepth 1 ! -type d -exec false {} + -quit 2>/dev/null
+}
+
+_dev_mounted ()
+{
+    local target="${1:?Error: missing mountpoint path}"
+    # Declare global output variable explicitly; -f restricts to top mount
+    declare -g device_mounted
+    device_mounted=$(findmnt -n -f -M "$target" -o SOURCE 2>/dev/null)
+    [[ -n "$device_mounted" ]]
+}
+
+_zfs_filesystem ()
+{
+    local dataset="${1:?Error: missing ZFS dataset name}"
+    # Restricted strictly to ZFS filesystems (excludes zvols and snapshots)
+    zfs list -H -t filesystem -o name "$dataset" &>/dev/null
+}
+
+_canmount_off ()
+{
+    local dataset="${1:?Error: missing ZFS dataset name}"
+    [[ "$(zfs get -H -o value canmount "$dataset" 2>/dev/null)" == "off" ]]
+}
+
+_overlay_off ()
+{
+    local dataset="${1:?Error: missing ZFS dataset name}"
+    [[ "$(zfs get -H -o value overlay "$dataset" 2>/dev/null)" == "off" ]]
+}
+
+
+
+################################################################################
 # Generally useful functiions                                                  #
 ################################################################################
 
@@ -35,17 +85,19 @@ get_second_children ()
 }
 
 get_bootsets ()
-# these have mountpoint / and canmount=noauto
+# these have mountpoint / and canmount=noautok, returns a linebreak separated list
+# in future willl all be {$BOOTPOOL}/BE/{$DISTRO}/{$INSTANCE}
 {
     zfs list -Ho name,canmount,mountpoint "$@" | awk '$2=="noauto" && $3=="/" { print $1 }'
 }
 
 _bootsets ()
 {
-    mapfile -t bootsets < <(zfs list -Ho name,canmount,mountpoint "$@" | awk '$2=="noauto" && $3=="/" { print $1 }')
+    mapfile -t bootsets < <(get_bootsets "$@")
 }
 
 _uniq_zfsuserprops () 
+# warning slow function. enumerates all zfs properties of all datasets if scope not restricted
 {
     if [ "$1" = "-t" ]; then
         local ztype="$1 $2"
@@ -57,15 +109,17 @@ _uniq_zfsuserprops ()
 }
 
 zls_userprops ()
+# warning slow function. enumerates all zfs properties of all datasets if scope not restricted
 {
-    zfs list -o name,used,referenced,usedsnap,overlay,canmount,mounted,mountpoint,$(paste -sd, _uniq_zfsuserprops) "$@"
+    local _uniq_userprops=$(_uniq_zfsuserprops "$@")
+    zfs list -o name,used,referenced,usedsnap,overlay,canmount,mounted,mountpoint,$(paste -sd, "$_uniq_userprops")  "$@"
 }
 
-_clean_mps ()
+clean_mps ()
 {
     local mp
     for mp in "$@"; do
-        if [ -d "$mp" ]; then
+        [[ -d "$mp" ]] && [[ _empty_dirtree "$mp" ]]; then
             if ! find "$mp" -mindepth 1 ! -type d -print -quit | grep -q .; then
                 sudo rm -r "$mp"
             fi
@@ -73,55 +127,23 @@ _clean_mps ()
     done
 }
 
-################################################################################
-# Boolean test functiions                                                      #
-################################################################################
-
-_empty_dir ()
-{
-    [ $(find "$1" -print -quit) ] && return 1 || return 0
-}
-
-_empty_dirtree ()
-{
-    [ $(find "$1" ! -type d -print -quit) ] && return 1 || return 0
-}
-
-_dev_mounted ()
-# returns 0 (true) and $device_mounted if a device is mounted at directory
-{
-    device_mounted=$(awk -v mp="$1" ' $2==mp { print $1 }' /proc/self/mounts);
-    [ -z $device_mounted ] && return 1 || return 0
-}
-
-_zfs_filesystem ()
-{
-     zfs list -Ho name $1 &>/dev/null
-}
-
-_canmount_off ()
-{
-    [ "$(zfs list -Ho canmount $1)" = "off" ] &>/dev/null && return 0 || return 1
-}
-
-_overlay_ff ()
-{
-    [ "$(zfs list -Ho overlay $1)" = "off" ] &>/dev/null && return 0
-}
-
-
 
 ################################################################################
 # Mount zfs datasets for offline access                                        #
 ################################################################################
 
-zm ()
+## These have been written for my boot-enviironemnet setup where I have universally
+# overlay=off; openZFS changed the default to overlay=on like other linux mount fns
+# in v 2.1.0. I need to consider changign my datasets behaviour.
+
+_zm ()
 {
     local ds="$1" mp="$2"
     [ $REMOVE_EMPTY_DIRS ] && _clean_mps "$mp"
     sudo mkdir -p "$mp"
     sudo mount -t zfs -o zfsutil "$ds" "$mp"
 }
+
 
 _zmount ()
 # Atomic mount function: mounts one dataset to one mountpoint with zfsutil
@@ -241,57 +263,58 @@ zma ()
 # Check mounted zfs datasets for inconsistencies                               #
 ################################################################################
 
-zcheck_canmountoff ()
-# Checks datasets from 'zfs mount' command for canmount=off
-{
-    local dataset mount_actual
-    > /tmp/canmountoff
+zcheck_canmountoff() {
+    local tmp_file
+    tmp_file=$(mktemp /tmp/canmountoff.XXXXXX) || return 1
+    trap 'rm -f "$tmp_file"' RETURN
 
-    while read -r dataset mount_actual; do
-        [ "$(zfs list -Ho canmount $dataset)" = "off" ] &&\
-            printf "%s \t %s \t %s \n" "$dataset" "$mount_actual" "$(zfs list -Ho overlay,canmount,mountpoint $dataset)"
+    # Batch read active mounts with canmount property in a single pass
+    while IFS=$'\t' read -r ds mp canmount overlay; do
+        if [[ "$canmount" == "off" ]]; then
+            printf "%s\t%s\t%s\t%s\n" "$ds" "$mp" "$overlay" "$canmount" >> "$tmp_file"
         fi
-    done < <(zfs mount) > /tmp/canmountoff
+    done < <(
+        join -t $'\t' -1 1 -2 1 \
+            <(zfs mount | sort -k1,1) \
+            <(zfs list -Ho name,canmount,overlay -t filesystem | sort -k1,1)
+    )
 
-    if [[ ! -s /tmp/canmountoff ]]; then
-        echo "No mounted zfs datasets with canmount=off"
-        return
+    if [[ ! -s "$tmp_file" ]]; then
+        echo "No mounted ZFS datasets with canmount=off."
+        return 0
     fi
 
-    column -t -N NAME,ACTUAL_MOUNT,OVERLAY,CANMOUNT,SET_MOUNT /tmp/canmountoff
-    read -r -p "Attempt to fix Y/N? "
-
-    if [[ $REPLY =~ [Yy] ]]; then
-        while read -r _dataset _mount_actual _remaining; do
-            sudo zfs unmount "$(zfs list -Ho name -r "$_dataset")" && sudo umount -lf "$_mount_actual" 2>/dev/null
-        done < /tmp/canmountoff
+    column -t -N "NAME,ACTUAL_MOUNT,OVERLAY,CANMOUNT" "$tmp_file"
+    read -r -p "Attempt to unmount these datasets? [y/N] " reply
+    if [[ "$reply" =~ ^[Yy]$ ]]; then
+        while IFS=$'\t' read -r ds mp _; do
+            echo "Unmounting: $ds from $mp"
+            sudo zfs unmount "$ds" 2>/dev/null || sudo umount -l "$mp"
+        done < "$tmp_file"
     fi
 }
 
-check_dupedmounts ()
-{
-    local numdupes dupedmount answer sets=0
+
+check_dupedmounts() {
+    local numdupes dupedmount sets=0
+    local target_list
+
+    target_list=$(awk '{ print $2 }' /proc/mounts | sort | uniq -c -d)
+    [[ -z "$target_list" ]] && { echo "No duplicate mountpoints found."; return 0; }
 
     while read -r numdupes dupedmount; do
         (( sets++ ))
-        echo
-        echo "Duplicate mountpoint: $dupedmount"
-        echo "Number of mounts: $numdupes"
-        echo
-
+        echo -e "\nDuplicate mountpoint: $dupedmount ($numdupes instances)"
         grep " $dupedmount " /proc/mounts
 
+        read -r -n 1 -p "Remove all but the first mounted instance above? [y/N] " answer </dev/tty
         echo
-        read -r -n 1 -p \
-            "Remove all but the first mounted device above? [y/N] " answer </dev/tty
-        echo
-
-        if [[ $answer =~ ^[Yy]$ ]]; then
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            # Unmount from topmost down, leaving the baseline mount intact
             for (( count=1; count<numdupes; count++ )); do
                 sudo umount "$dupedmount" || break
             done
         fi
-    done < <(awk '{ print $2 }' /proc/mounts | sort | uniq -c -d )
-
-    [[ $sets -eq 0 ]] && echo "No duplicated mountpoints found."
+    done <<< "$target_list"
 }
+

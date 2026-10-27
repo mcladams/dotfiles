@@ -44,18 +44,14 @@ lsiommu() {
     shopt -u nullglob
 }
 
-pname_abs() {
-# pn_abs: get absolute pathname(s) from relative
-    if [ ! -a $1 ]; then
-        echo '"'$1'"' was not found.
-        return
-    fi
-    pathname=$(readlink -f $1)
-    filename=${pathname##*/}
-    path=${pathname%/*}
-    #echo $path $filename $pathname
-    echo $pathname
+#### repace spaces with underscore ####
+underscore() {
+#    if [ $1 ]; then maxd=$1; else maxd=20; fi
+    for i in {1..18}; do
+        find ./ -mindepth $i -maxdepth $i -regex '.*[ ].*' -print0 | xargs -0 sed 's/[ ]/_/g'
+    done
 }
+
 
 #### rsync ####
 
@@ -73,59 +69,32 @@ alias rs_mir='rsync_mirror'
 
 rsysnc_system() {
     # use for running system
-    echo 'exclude={"/boot/efi/*","/cdrom","/dev/*","/efi/*","/lost+found","/media/*","/mnt/*","/proc/*","/run/*","/sys/*","/target","/tmp/*"}'
+    echo 'exclude={"/boot/efi/*","/cdrom","/dev/*","/efi/*","/lost+found","/media/*","/mnt/*","/proc/*","/run/*","sys/*","/target","/tmp/*"}'
     echo "waiting five secs" && sleep 5
     rsync -hh -aHAX --info=stats1,progress2 --modify-window=1 --exclude={"/boot/efi/*","/cdrom","/dev/*","/efi/*","/lost+found","/media/*","/mnt/*","/proc/*","/run/*","/sys/*","/target","/tmp/*"} $@
 }
 
-#### apt,dpkg,etc ####
-deb2xz() {
-    # TODO: move to .dotfiles/scripts or similar as part of homedir normalization project
-    # debian 11 bullseye and earlier can only install xz compressed deb packaing, not zstd
-    # this converts zstd comrpessed deb to xz, not really required in .bash_aliases anymore
-    set -e
-    pkges="$@"
-    for pkg in $pkges; do
-        if [ ! "${pkg##*.}" = "deb" ] || [ ! -f $pkg ]; then
-            echo '"'$pkg'"' is not a file or does not end in .deb
-            continue
-        elif grep -q "control.tar.xz" <<< $files; then
-            echo '"'$pkg'"' is already in tar.xz format, not touching it.
+#### filesystem utils
+
+mnt_disks() {
+    for disk in "$@"; do
+        if [[ ! -b "$disk" ]]; then
+            echo "Error: '$disk' is not a valid block device." >&2
             continue
         fi
-        pathname=$(readlink -f $pkg)
-        path=${pathname%/*}
-        filename=${pathname##*/}
-        pkgname=${filename%.*}
-        # do it in a tmp dir
-        mkdir /tmp/$pkgname
-        pushd /tmp/$pkgname
-        ar -x $pathname
-        zstd -d < control.tar.zst | xz > control.tar.xz
-        zstd -d < data.tar.zst | xz > data.tar.xz
-        mv $pathname /tmp/$filename
-        ar -m -c -a sdsd $pathname debian-binary control.tar.xz data.tar.xz
-        popd
-    done
-    echo "Done. Original debs move to /tmp"
-}
-
-
-mnta() {
-    # provided with a list of block device lsblk knames and/or labels,mount them all to /media/(kname|label)
-    # not sure if working 
-    for arg in $@; do
-        if grep -q "$arg" <<< $(lsblk -n -o label); then
-            #argnospace=$(echo "$arg" | sed 's/[ ]/\-/g')
-            mkdir -p /media/mnt/$argnospace
-            mount LABEL="$arg" /media/mnt/$argnospace
-        elif grep -q ${arg##*/} <<< $(lsblk -n -o kname); then
-            kdev=${arg##*/}
-            mkdir -p /media/mnt/$kdev
-            mount /dev/$kdev /media/mnt/$kdev
-        else
-            echo "$arg" neither a label nor a device name, not mounted
+        
+        # Find all child partitions with a filesystem, ignoring raw/swap/zfs/luks
+        local parts
+        parts=$(lsblk -p -r -n -o NAME,FSTYPE "$disk" 2>/dev/null | awk 'NF==2 && $2 !~ /^(swap|crypto_LUKS|LVM2_member|zfs_member)$/ {print $1}')
+        
+        if [[ -z "$parts" ]]; then
+            echo "Notice: No mountable partitions found on '$disk'."
+            continue
         fi
+
+        for part in $parts; do
+            udisksctl mount -b "$part"
+        done
     done
 }
 
@@ -147,7 +116,8 @@ is_zfs_dataset () { zfs list -Ho name | grep -qFx $1; }
 # mount point alwasy created with mkdir -p
 
 zfs_mount_tree () {
-    # usage short form arguments, datasets list, mountpoint
+# WIP
+# usage short form arguments, datasets list, mountpoint
     while getopts "rCR:" opt; do
         case "$opt" in
             C)
@@ -170,7 +140,6 @@ zfs_mount_tree () {
     echo "CREATE=$CREATE RECURSE=$RECURSE ALTROOT=$ALTROOT"
     echo "1: $1 2: $2 3: $3 4: $4"
 }
-#    zfs list -Ho name | grep -qFx $1 && 
 
 zm (){
     # zfs list -Ho name | grep -qFx "$1" && echo "Exists" || echo "Not found"
@@ -191,32 +160,7 @@ zlsm() {
       | grep -E -e '\(on|off\)[ ]+on'
 }
 
-zlsz() {
-# TODO ASAP EXTEND this script for ways to present zfs user properties from org.zfbootmenu and org.openzfs.systemd
-# zfs list zsys - show zsys custom properties of datasets (fs,snap,all)
-# zsys is deprecated, may be around on ubuntu 22.04 LTS and earlier so keep for now
 
-    if [ "$1" = "-t" ]; then
-        type="$2"
-        shift 2
-    else
-        type="filesystem"
-    fi
-    if [ "$1" = "-r" ]; then
-        recurs="-r"
-        shift 1
-    fi
-    zfs get $recurs -o name,property,value -t $type all "$@" | egrep -e 'com\.ubuntu\.zsys'
-}
-
-
-#### repace spaces with underscore ####
-underscore() {
-#    if [ $1 ]; then maxd=$1; else maxd=20; fi
-    for i in {1..18}; do
-        find ./ -mindepth $i -maxdepth $i -regex '.*[ ].*' -print0 | xargs -0 sed 's/[ ]/_/g'
-    done
-}
 # list we sort all snapshots  by size
 alias zsnap_large='zfs list -o used,name -t snapshot | sort -h | tail'
 
@@ -251,7 +195,13 @@ unlock-keyring() {
 
     unset KEYRING_PASSWORD
 }
-gemini() { if [ "$1" = "extensions" ]; then shift 1; agy plugin "$@";  return; else gemini "$@"; fi; }
+
+
+# gemini function allows copy-paste from gemini-cli.google/extensions install line in whole for agy
+# need to specify which gemini and full path in else section
+#gemini() { if [ "$1" = "extensions" ]; then shift 1; agy plugin "$@";  return; else gemini "$@"; fi; }
+
+
 read_hostid () 
 { 
     local arg;
@@ -260,4 +210,19 @@ read_hostid ()
     do
         od -tx4 -N4 -An "$arg";
     done
+}
+
+
+find_index () 
+{ 
+    local -n array_ref=$1;
+    local search_val=$2;
+    for i in "${!array_ref[@]}";
+    do
+        if [[ "${array_ref[$i]}" == "$search_val" ]]; then
+            echo "$i";
+            return 0;
+        fi;
+    done;
+    return 1
 }

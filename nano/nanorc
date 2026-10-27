@@ -172,7 +172,7 @@ set regexp
 # set smarthome
 
 ## Spread overlong lines over multiple screen lines.
-set softwrap
+# set softwrap
 
 ## Scroll only the current line sideways (instead of all lines).
 # set solosidescroll

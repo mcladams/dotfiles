@@ -1,0 +1,6 @@
+---
+Name: ${DOTFILES}/bash/utils/ directory
+Description: Tested useful scripts that are sourced on demand.
+State: Not tested or linted
+Action: Shell check/lint and test. Review for currency else move to archive.
+---
